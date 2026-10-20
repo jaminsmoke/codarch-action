@@ -4,6 +4,8 @@
 
 # CodArch GitHub Action
 
+Repositorio público: [`jaminsmoke/codarch-action`](https://github.com/jaminsmoke/codarch-action).
+
 Analiza el commit base y el head de un pull request, escribe un `report.json` determinista, publica el
 mapa como artefacto y actualiza un comentario en el PR.
 
@@ -32,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: jaminsmoke/codarch/apps/github-action@v1
+      - uses: jaminsmoke/codarch-action@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fail-on: none # aviso; usa violations, cycles, hotspots o any para bloquear
