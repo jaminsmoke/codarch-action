@@ -1,0 +1,255 @@
+name: CodArch
+description: Analiza base y head de un PR, publica el mapa y comenta el diff de arquitectura.
+author: CodArch
+
+inputs:
+  github-token:
+    description: Token con permiso para comentar en el PR.
+    required: false
+    default: ""
+  base-ref:
+    description: Rama base; por defecto GITHUB_BASE_REF.
+    required: false
+    default: ""
+  base-sha:
+    description: Commit base explícito; si falta se calcula el merge-base.
+    required: false
+    default: ""
+  fail-on:
+    description: "Política de bloqueo: none, cycles, violations, hotspots o any."
+    required: false
+    default: "none"
+  config:
+    description: Ruta a .codarch.yml relativa al root; vacío o none para desactivar.
+    required: false
+    default: ".codarch.yml"
+  comment:
+    description: Publicar o actualizar el comentario del PR.
+    required: false
+    default: "true"
+  artifact-name:
+    description: Nombre del artefacto con snapshots, mapa y reporte.
+    required: false
+    default: "codarch"
+  node-version:
+    description: Versión de Node.
+    required: false
+    default: "22"
+  version:
+    description: Versión exacta del paquete codarch que se instala desde npm.
+    required: false
+    default: "0.1.0"
+  working-directory:
+    description: Directorio del proyecto dentro del workspace.
+    required: false
+    default: "."
+  title:
+    description: Título visible del mapa.
+    required: false
+    default: "CodArch"
+  top:
+    description: Número de hotspots en el reporte.
+    required: false
+    default: "10"
+
+outputs:
+  report:
+    description: Ruta al report.json.
+    value: ${{ steps.paths.outputs.report }}
+  map:
+    description: Ruta al map.html del head.
+    value: ${{ steps.paths.outputs.map }}
+  status:
+    description: "0 sin bloqueo, 2 política incumplida, 1 error."
+    value: ${{ steps.finish.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - id: paths
+      shell: bash
+      env:
+        CODARCH_WORKDIR: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        ROOT="${CODARCH_WORKDIR:-$GITHUB_WORKSPACE}"
+        ROOT="$(cd "$ROOT" && pwd)"
+        REPO_ROOT="$(git -C "$ROOT" rev-parse --show-toplevel)"
+        ARTIFACT_DIR="${RUNNER_TEMP}/codarch-artifacts"
+        BASE_DIR="${RUNNER_TEMP}/codarch-base"
+        rm -rf "$ARTIFACT_DIR" "$BASE_DIR"
+        mkdir -p "$ARTIFACT_DIR/base" "$ARTIFACT_DIR/head"
+        {
+          echo "CODARCH_ROOT=$ROOT"
+          echo "CODARCH_REPO_ROOT=$REPO_ROOT"
+          echo "CODARCH_ARTIFACT_DIR=$ARTIFACT_DIR"
+          echo "CODARCH_BASE_DIR=$BASE_DIR"
+        } >> "$GITHUB_ENV"
+        {
+          echo "report=$ARTIFACT_DIR/report.json"
+          echo "map=$ARTIFACT_DIR/head/map.html"
+        } >> "$GITHUB_OUTPUT"
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Instalar CodArch
+      shell: bash
+      env:
+        CODARCH_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        CLI_PREFIX="${RUNNER_TEMP}/codarch-cli"
+        rm -rf "$CLI_PREFIX"
+        mkdir -p "$CLI_PREFIX"
+        npm install --prefix "$CLI_PREFIX" --no-save --no-audit --no-fund \
+          "codarch@${CODARCH_VERSION}"
+        CLI="$CLI_PREFIX/node_modules/codarch/index.js"
+        if [ ! -f "$CLI" ]; then
+          echo "::error::No se encontró codarch@${CODARCH_VERSION} tras instalarlo."
+          exit 1
+        fi
+        echo "CODARCH_CLI=$CLI" >> "$GITHUB_ENV"
+
+    - name: Preparar base
+      shell: bash
+      env:
+        CODARCH_BASE_REF_INPUT: ${{ inputs.base-ref }}
+        CODARCH_BASE_SHA_INPUT: ${{ inputs.base-sha }}
+      run: |
+        set -euo pipefail
+        cd "$CODARCH_ROOT"
+        BASE_SHA="${CODARCH_BASE_SHA_INPUT:-}"
+        if [ -z "$BASE_SHA" ]; then
+          BASE_REF="${CODARCH_BASE_REF_INPUT:-${GITHUB_BASE_REF:-}}"
+          if [ -z "$BASE_REF" ]; then
+            echo "::error::CodArch necesita base-ref o base-sha (o ejecutarse en un pull_request)."
+            exit 1
+          fi
+          if ! git rev-parse --verify "origin/${BASE_REF}" >/dev/null 2>&1; then
+            git fetch origin "${BASE_REF}" --depth=50
+          fi
+          BASE_SHA="$(git merge-base "origin/${BASE_REF}" HEAD)"
+        fi
+        echo "CODARCH_BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+        git worktree add --detach "$CODARCH_BASE_DIR" "$BASE_SHA"
+
+    - name: Analizar base
+      shell: bash
+      env:
+        CODARCH_TITLE_INPUT: ${{ inputs.title }}
+      run: |
+        set -euo pipefail
+        cd "$CODARCH_ROOT"
+        node "$CODARCH_CLI" analyze "$CODARCH_BASE_DIR" \
+          -o "$CODARCH_ARTIFACT_DIR/base" \
+          --title "${CODARCH_TITLE_INPUT:-CodArch} · base"
+
+    - name: Analizar head
+      shell: bash
+      env:
+        CODARCH_TITLE_INPUT: ${{ inputs.title }}
+      run: |
+        set -euo pipefail
+        cd "$CODARCH_ROOT"
+        node "$CODARCH_CLI" analyze "$CODARCH_ROOT" \
+          -o "$CODARCH_ARTIFACT_DIR/head" \
+          --title "${CODARCH_TITLE_INPUT:-CodArch} · head"
+        cp "$CODARCH_ARTIFACT_DIR/head/map.html" "$CODARCH_ARTIFACT_DIR/map.html"
+
+    - name: Comparar y aplicar política
+      shell: bash
+      env:
+        CODARCH_FAIL_ON: ${{ inputs.fail-on }}
+        CODARCH_CONFIG: ${{ inputs.config }}
+        CODARCH_TOP: ${{ inputs.top }}
+      run: |
+        set -euo pipefail
+        cd "$CODARCH_ROOT"
+        DIFF_ARGS=(
+          "$CODARCH_ARTIFACT_DIR/base/snapshot.cc.json"
+          "$CODARCH_ARTIFACT_DIR/head/snapshot.cc.json"
+          "--out" "$CODARCH_ARTIFACT_DIR/report.json"
+          "--top" "${CODARCH_TOP:-10}"
+          "--fail-on" "${CODARCH_FAIL_ON:-none}"
+        )
+        if [ -n "${CODARCH_CONFIG:-}" ] && [ "${CODARCH_CONFIG}" != "none" ]; then
+          CONFIG_PATH="$CODARCH_ROOT/$CODARCH_CONFIG"
+          if [ -f "$CONFIG_PATH" ]; then
+            DIFF_ARGS+=("--config" "$CONFIG_PATH")
+          fi
+        fi
+
+        set +e
+        node "$CODARCH_CLI" diff "${DIFF_ARGS[@]}"
+        STATUS=$?
+        set -e
+        echo "CODARCH_EXIT_CODE=$STATUS" >> "$GITHUB_ENV"
+        echo "CODARCH_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+    - name: Comentar en el PR
+      if: always() && inputs.comment == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        CODARCH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        CODARCH_ARTIFACT: ${{ inputs.artifact-name }}
+      run: |
+        set -euo pipefail
+        if [ -z "${PR_NUMBER:-}" ]; then
+          echo "No es un pull_request; se omite el comentario."
+          exit 0
+        fi
+        if [ -z "${GH_TOKEN:-}" ]; then
+          echo "::warning::Sin github-token; no se publica el comentario."
+          exit 0
+        fi
+        if [ ! -f "$CODARCH_ARTIFACT_DIR/report.json" ]; then
+          echo "::warning::No hay reporte; no se publica el comentario."
+          exit 0
+        fi
+
+        node "$GITHUB_ACTION_PATH/render-comment.mjs" \
+          "$CODARCH_ARTIFACT_DIR/report.json" > "$RUNNER_TEMP/codarch-comment.md"
+
+        COMMENT_ID="$(gh api \
+          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+          --paginate \
+          --jq '.[] | select(.body | contains("<!-- codarch-report -->")) | .id' \
+          | head -n 1 || true)"
+
+        if [ -n "$COMMENT_ID" ]; then
+          gh api -X PATCH \
+            "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" \
+            -F body=@"$RUNNER_TEMP/codarch-comment.md" >/dev/null
+        else
+          gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/codarch-comment.md" >/dev/null
+        fi
+
+    - name: Subir artefacto
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/codarch-artifacts
+        if-no-files-found: warn
+
+    - id: finish
+      if: always()
+      shell: bash
+      run: |
+        set +e
+        STATUS="${CODARCH_EXIT_CODE:-1}"
+        if [ "$STATUS" = "2" ]; then
+          echo "::error::CodArch: la política de arquitectura ha fallado."
+        elif [ "$STATUS" != "0" ]; then
+          echo "::error::CodArch: error de análisis o de configuración (código $STATUS)."
+        fi
+        if [ -d "${CODARCH_BASE_DIR:-}" ]; then
+          git -C "${CODARCH_REPO_ROOT:-$GITHUB_WORKSPACE}" worktree remove --force "$CODARCH_BASE_DIR" >/dev/null 2>&1 || true
+        fi
+        echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+        exit "$STATUS"
