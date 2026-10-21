@@ -16,6 +16,7 @@ const artifact = process.env.CODARCH_ARTIFACT ?? "codarch";
 const introducedViolations = rules.violations?.introduced ?? [];
 const cycles = report.cycles?.introduced ?? [];
 const hotspots = report.hotspots ?? [];
+const migration = report.migration ?? null;
 const blocked = status === "2";
 const errored = status === "1";
 const changes =
@@ -63,6 +64,13 @@ if (rules.configured) {
     `| Reglas | ${rules.summary?.introduced ?? 0} nuevas · ${
       rules.summary?.existing ?? 0
     } existentes |`
+  );
+}
+if (migration) {
+  lines.push(
+    `| Migración | deuda ${migration.debt?.head ?? 0} (${
+      signed(migration.debt?.delta ?? 0)
+    }) · ${migration.crossings?.head ?? 0} cruces FFI |`
   );
 }
 lines.push("");
@@ -114,10 +122,38 @@ if (introducedViolations.length > 0) {
   lines.push("");
 }
 
+if (migration) {
+  const increased = migration.files?.increased ?? [];
+  const decreased = migration.files?.decreased ?? [];
+  if (increased.length > 0 || decreased.length > 0) {
+    lines.push("### Migración");
+    for (const file of increased.slice(0, 5)) {
+      lines.push(
+        `- \`${escapeInline(file.path)}\`: deuda ${file.base ?? 0} → ${
+          file.head ?? 0
+        } (${signed(file.delta ?? 0)})`
+      );
+    }
+    for (const file of decreased.slice(0, 5)) {
+      lines.push(
+        `- \`${escapeInline(file.path)}\`: deuda ${file.base ?? 0} → ${
+          file.head ?? 0
+        } (${signed(file.delta ?? 0)})`
+      );
+    }
+    const shown = Math.min(5, increased.length) + Math.min(5, decreased.length);
+    const total = increased.length + decreased.length;
+    if (total > shown) lines.push(`- … y ${total - shown} más`);
+    lines.push("");
+  }
+}
+
 if (
   cycles.length === 0 &&
   hotspots.length === 0 &&
-  introducedViolations.length === 0
+  introducedViolations.length === 0 &&
+  (migration?.files?.increased?.length ?? 0) === 0 &&
+  (migration?.files?.decreased?.length ?? 0) === 0
 ) {
   lines.push("Sin ciclos, hotspots ni violaciones nuevas.");
   lines.push("");
