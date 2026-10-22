@@ -11,8 +11,8 @@ mapa como artefacto y actualiza un comentario en el PR.
 
 La acción instala el CLI publicado en npm (`codarch@0.2.0` por defecto), así que no necesita el
 código de CodArch en el workspace ni ejecuta `npm ci` sobre el proyecto analizado. La decisión está en
-[ADR 0012](https://github.com/jaminsmoke/codarch/blob/main/docs/adr/0012-github-action.md) y
-[ADR 0014](https://github.com/jaminsmoke/codarch/blob/main/docs/adr/0014-distribucion-cli-npm.md).
+[ADR 0012](https://github.com/jaminsmoke/codarch/blob/main/docs/adr/0011-0020/0012-github-action.md) y
+[ADR 0014](https://github.com/jaminsmoke/codarch/blob/main/docs/adr/0011-0020/0014-distribucion-cli-npm.md).
 
 ## Uso
 

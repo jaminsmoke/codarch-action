@@ -17,6 +17,7 @@ const introducedViolations = rules.violations?.introduced ?? [];
 const cycles = report.cycles?.introduced ?? [];
 const hotspots = report.hotspots ?? [];
 const migration = report.migration ?? null;
+const symbols = report.symbols ?? null;
 const blocked = status === "2";
 const errored = status === "1";
 const changes =
@@ -27,7 +28,10 @@ const changes =
   (summary.removedEdges ?? 0) +
   cycles.length +
   hotspots.length +
-  introducedViolations.length;
+  introducedViolations.length +
+  (symbols?.summary?.changed ?? 0) +
+  (symbols?.summary?.added ?? 0) +
+  (symbols?.summary?.removed ?? 0);
 
 const lines = [];
 lines.push("<!-- codarch-report -->");
@@ -64,6 +68,13 @@ if (rules.configured) {
     `| Reglas | ${rules.summary?.introduced ?? 0} nuevas · ${
       rules.summary?.existing ?? 0
     } existentes |`
+  );
+}
+if (symbols) {
+  lines.push(
+    `| Símbolos | +${symbols.summary?.added ?? 0} · −${
+      symbols.summary?.removed ?? 0
+    } · ~${symbols.summary?.changed ?? 0} |`
   );
 }
 if (migration) {
@@ -110,14 +121,50 @@ if (introducedViolations.length > 0) {
         : violation.severity === "warn"
           ? "⚠️"
           : "ℹ️";
+    // De dónde sale la regla (ADR 0029): el equipo, un perfil o un addon.
+    const origin = ruleOrigin(violation.source);
     lines.push(
-      `- ${icon} \`${escapeInline(violation.rule)}\`: ${escapeText(
+      `- ${icon} \`${escapeInline(violation.rule)}\`${origin}: ${escapeText(
         violation.message
       )}`
     );
   }
   if (introducedViolations.length > 5) {
     lines.push(`- … y ${introducedViolations.length - 5} más`);
+  }
+  lines.push("");
+}
+
+if (symbols && symbols.files?.length > 0) {
+  lines.push("### Símbolos");
+  for (const file of symbols.files.slice(0, 5)) {
+    const changed = file.symbols.filter((symbol) => symbol.status === "changed");
+    for (const symbol of changed.slice(0, 3)) {
+      const delta = symbol.complexityDelta;
+      lines.push(
+        `- \`${escapeInline(file.path)}\` · \`${escapeInline(symbol.name)}\`: complejidad ${
+          delta === null || delta === undefined ? "sin medir" : signed(delta)
+        }`
+      );
+    }
+    const added = file.symbols.filter((symbol) => symbol.status === "added");
+    const removed = file.symbols.filter((symbol) => symbol.status === "removed");
+    if (added.length > 0) {
+      lines.push(
+        `- \`${escapeInline(file.path)}\`: ${added.length} nuevo(s) · ${added
+          .slice(0, 3)
+          .map((symbol) => `\`${escapeInline(symbol.name)}\``)
+          .join(", ")}`
+      );
+    }
+    if (removed.length > 0) {
+      lines.push(
+        `- \`${escapeInline(file.path)}\`: ${removed.length} eliminado(s) · ${removed
+          .slice(0, 3)
+          .map((symbol) => `\`${escapeInline(symbol.name)}\``)
+          .join(", ")}`
+      );
+    }
   }
   lines.push("");
 }
@@ -153,9 +200,10 @@ if (
   hotspots.length === 0 &&
   introducedViolations.length === 0 &&
   (migration?.files?.increased?.length ?? 0) === 0 &&
-  (migration?.files?.decreased?.length ?? 0) === 0
+  (migration?.files?.decreased?.length ?? 0) === 0 &&
+  (symbols?.files?.length ?? 0) === 0
 ) {
-  lines.push("Sin ciclos, hotspots ni violaciones nuevas.");
+  lines.push("Sin ciclos, hotspots, violaciones ni cambios de símbolos nuevos.");
   lines.push("");
 }
 
@@ -176,6 +224,19 @@ process.stdout.write(`${lines.join("\n")}\n`);
 function signed(value) {
   if (!value) return "0";
   return value > 0 ? `+${value}` : String(value);
+}
+
+/**
+ * De dónde sale una regla, en corto: el equipo no se anota (es lo normal),
+ * un perfil del catálogo se dice y un addon se nombra (ADR 0029).
+ */
+function ruleOrigin(source) {
+  if (!source || source === "config") return "";
+  if (source === "profile") return " (del perfil)";
+  if (String(source).startsWith("addon:")) {
+    return ` (addon \`${escapeInline(String(source).slice("addon:".length))}\`)`;
+  }
+  return "";
 }
 
 function escapeInline(value) {
