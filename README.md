@@ -14,6 +14,17 @@ código de CodArch en el workspace ni ejecuta `npm ci` sobre el proyecto analiza
 [ADR 0012](https://github.com/jaminsmoke/codarch/blob/main/docs/adr/0011-0020/0012-github-action.md) y
 [ADR 0014](https://github.com/jaminsmoke/codarch/blob/main/docs/adr/0011-0020/0014-distribucion-cli-npm.md).
 
+> [!NOTE]
+> El producto está en **alpha** ✓ ([ADR 0032](https://github.com/jaminsmoke/codarch/blob/main/docs/adr/0031-0040/0032-las-versiones-y-las-actualizaciones.md)):
+> las alphas se publican en npm con la etiqueta `next` ✓, así que la acción instala por defecto la
+> última versión normal ✓. Para instalar la alpha:
+>
+> ```yaml
+> - uses: jaminsmoke/codarch-action@v1
+>   with:
+>     version: 0.3.0-alpha.1
+> ```
+
 ## Uso
 
 ```yaml
