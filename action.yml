@@ -20,7 +20,7 @@ inputs:
     required: false
     default: "none"
   config:
-    description: Ruta a .codarch.yml relativa al root; vacío o none para desactivar.
+    description: Ruta a .codarch.yml relativa al root; reglas y alcance. Vacío o none para desactivar.
     required: false
     default: ".codarch.yml"
   comment:
@@ -38,7 +38,7 @@ inputs:
   version:
     description: Versión exacta del paquete codarch que se instala desde npm.
     required: false
-    default: "0.3.0-alpha.1"
+    default: "0.3.0-alpha.2"
   working-directory:
     description: Directorio del proyecto dentro del workspace.
     required: false
@@ -139,23 +139,49 @@ runs:
       shell: bash
       env:
         CODARCH_TITLE_INPUT: ${{ inputs.title }}
+        CODARCH_CONFIG: ${{ inputs.config }}
       run: |
         set -euo pipefail
         cd "$CODARCH_ROOT"
+        CONFIG_ARGS=()
+        if [ -n "${CODARCH_CONFIG:-}" ] && [ "${CODARCH_CONFIG}" != "none" ] \
+          && [ "${CODARCH_CONFIG}" != ".codarch.yml" ] \
+          && [ "${CODARCH_CONFIG}" != ".codarch.yaml" ]; then
+          CONFIG_PATH="$CODARCH_BASE_DIR/$CODARCH_CONFIG"
+          if [ -f "$CONFIG_PATH" ]; then
+            CONFIG_ARGS+=("--config" "$CONFIG_PATH")
+          fi
+        elif [ "${CODARCH_CONFIG:-}" = "none" ]; then
+          CONFIG_ARGS+=("--no-config")
+        fi
         node "$CODARCH_CLI" analyze "$CODARCH_BASE_DIR" \
           -o "$CODARCH_ARTIFACT_DIR/base" \
-          --title "${CODARCH_TITLE_INPUT:-CodArch} · base"
+          --title "${CODARCH_TITLE_INPUT:-CodArch} · base" \
+          "${CONFIG_ARGS[@]}"
 
     - name: Analizar head
       shell: bash
       env:
         CODARCH_TITLE_INPUT: ${{ inputs.title }}
+        CODARCH_CONFIG: ${{ inputs.config }}
       run: |
         set -euo pipefail
         cd "$CODARCH_ROOT"
+        CONFIG_ARGS=()
+        if [ -n "${CODARCH_CONFIG:-}" ] && [ "${CODARCH_CONFIG}" != "none" ] \
+          && [ "${CODARCH_CONFIG}" != ".codarch.yml" ] \
+          && [ "${CODARCH_CONFIG}" != ".codarch.yaml" ]; then
+          CONFIG_PATH="$CODARCH_ROOT/$CODARCH_CONFIG"
+          if [ -f "$CONFIG_PATH" ]; then
+            CONFIG_ARGS+=("--config" "$CONFIG_PATH")
+          fi
+        elif [ "${CODARCH_CONFIG:-}" = "none" ]; then
+          CONFIG_ARGS+=("--no-config")
+        fi
         node "$CODARCH_CLI" analyze "$CODARCH_ROOT" \
           -o "$CODARCH_ARTIFACT_DIR/head" \
-          --title "${CODARCH_TITLE_INPUT:-CodArch} · head"
+          --title "${CODARCH_TITLE_INPUT:-CodArch} · head" \
+          "${CONFIG_ARGS[@]}"
         cp "$CODARCH_ARTIFACT_DIR/head/map.html" "$CODARCH_ARTIFACT_DIR/map.html"
 
     - name: Comparar y aplicar política
@@ -179,6 +205,8 @@ runs:
           if [ -f "$CONFIG_PATH" ]; then
             DIFF_ARGS+=("--config" "$CONFIG_PATH")
           fi
+        elif [ "${CODARCH_CONFIG:-}" = "none" ]; then
+          DIFF_ARGS+=("--no-config")
         fi
 
         set +e
