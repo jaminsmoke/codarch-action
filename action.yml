@@ -38,7 +38,7 @@ inputs:
   version:
     description: Versión exacta del paquete codarch que se instala desde npm.
     required: false
-    default: "0.3.1-alpha.3"
+    default: "0.3.21"
   working-directory:
     description: Directorio del proyecto dentro del workspace.
     required: false
